@@ -1,0 +1,103 @@
+trigger:
+- main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+- stage: Test
+  jobs:
+  - job: run_tests
+    displayName: 'Run Tests'
+    continueOnError: true
+    timeoutInMinutes: 60
+    container:
+      image: python:3.9
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.9'
+      displayName: 'Use Python 3.9'
+    - task: CachePython@0
+      inputs:
+        key: 'Python39 | "$(Agent.OS)" | requirements.txt'
+        command: 'restore'
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+      displayName: 'Cache dependencies'
+    - script: |
+        pip install -r requirements.txt
+        pytest -v --alluredir=allure_results
+      displayName: 'Run pytest'
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish allure_results'
+      inputs:
+        PathtoPublish: '$(System.DefaultWorkingDirectory)/allure_results'
+        ArtifactName: 'allure_results'
+        publishLocation: 'Container'
+        retentionDays: 1
+
+- stage: HistoryCopy
+  jobs:
+  - job: history_copy
+    displayName: 'Copy history'
+    continueOnError: true
+    timeoutInMinutes: 60
+    container:
+      image: python:3.9
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.9'
+      displayName: 'Use Python 3.9'
+    - script: |
+        curl --location --output artifacts.zip "https://gitlab.com/api/v4/projects/$(System.TeamProjectId)/jobs/artifacts/main/download?job=pages&job_token=$(System.AccessToken)"
+        unzip artifacts.zip
+        chmod -R 777 public
+        cp ./public/history/* ./allure_results
+      displayName: 'Copy history'
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish allure_results'
+      inputs:
+        PathtoPublish: '$(System.DefaultWorkingDirectory)/allure_results'
+        ArtifactName: 'allure_results'
+        publishLocation: 'Container'
+        retentionDays: 1
+
+- stage: GenerateReport
+  jobs:
+  - job: generate_report
+    displayName: 'Generate Report'
+    timeoutInMinutes: 60
+    container:
+      image: frankescobar/allure-docker-service
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.x'
+      displayName: 'Use Python 3.x'
+    - script: |
+        allure generate -c allure_results -o allure-report
+      displayName: 'Generate Allure Report'
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Allure Report'
+      inputs:
+        PathtoPublish: '$(System.DefaultWorkingDirectory)/allure-report'
+        ArtifactName: 'allure_report'
+        publishLocation: 'Container'
+        retentionDays: 1
+
+- stage: Report
+  jobs:
+  - job: pages
+    displayName: 'Publish Allure Report'
+    continueOnError: true
+    dependsOn: generate_report
+    timeoutInMinutes: 60
+    steps:
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Pages'
+      inputs:
+        PathtoPublish: '$(System.Default
